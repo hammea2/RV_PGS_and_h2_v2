@@ -1,0 +1,163 @@
+# Setup #
+library(pacman)
+p_load(tidyverse)
+
+root = "/lindstroem/austin_working/Dissertation/Aim_3/Rare_variant_PGS/AoU_trained/"
+e_folder = "AoU_external/"
+i_folder = "AoU_internal/"
+
+# Load data #
+e_valid_breast = read.csv(paste0(root, e_folder, "AoU_trained_breast_external_OR_by_quantile_table.txt")) %>%
+  mutate(Cancer = "Breast cancer", Validation = "UKB (External)")
+e_valid_colorectal = read.csv(paste0(root, e_folder, "AoU_trained_colorectal_external_OR_by_quantile_table.txt"))  %>%
+  mutate(Cancer = "Colorectal cancer", Validation = "UKB (External)")
+e_valid_prostate = read.csv(paste0(root, e_folder, "AoU_trained_prostate_external_OR_by_quantile_table.txt"))  %>%
+  mutate(Cancer = "Prostate cancer", Validation = "UKB (External)")
+
+i_valid_breast = read.csv(paste0(root, i_folder, "AoU_trained_breast_internal_OR_by_quantile_table.txt")) %>%
+  mutate(Cancer = "Breast cancer", Validation = "AoU (Internal)")
+i_valid_colorectal = read.csv(paste0(root, i_folder, "AoU_trained_colorectal_internal_OR_by_quantile_table.txt"))  %>%
+  mutate(Cancer = "Colorectal cancer", Validation = "AoU (Internal)")
+i_valid_prostate = read.csv(paste0(root, i_folder, "AoU_trained_prostate_internal_OR_by_quantile_table.txt"))  %>%
+  mutate(Cancer = "Prostate cancer", Validation = "AoU (Internal)")
+
+validation = rbind.data.frame(i_valid_breast, i_valid_colorectal, i_valid_prostate, e_valid_breast, e_valid_colorectal, e_valid_prostate) %>%
+  filter(Superpopulation == "EUR")
+validation$Cancer = factor(validation$Cancer, levels = c("Breast cancer", "Colorectal cancer", "Prostate cancer"))
+
+# Plot #
+validation <- validation %>%
+  mutate(
+    # CV quantile (before comma)
+    cv_lab = sub(",.*$", "", JointLabel),
+    
+    # RV quantile (after comma)
+    rv_lab = trimws(sub("^[^,]*,\\s*", "", JointLabel)),
+    rv_lab = gsub("\\[90-100%\\)", "[90-100%]", rv_lab),
+    
+    # Reference ONLY when:
+    #  - RV lower bound is 0
+    #  - CV quantile is [33-66%)
+    is_ref = grepl("^\\[0", rv_lab) & cv_lab == "[33–66%)",
+    
+    # X-axis label
+    x_lab = cv_lab,
+    
+    # Color label with special handling
+    color_lab = dplyr::case_when(
+      is_ref ~ "Reference",
+      grepl("^\\[0", rv_lab) ~ "non-cRV carriers",
+      grepl("75%\\)$", rv_lab) ~ "cRV carriers < 75%",
+      TRUE ~ rv_lab
+    )
+  )
+
+
+rv_levels <- validation %>%
+  filter(!is_ref) %>%
+  distinct(color_lab, rv_lab) %>%
+  mutate(
+    lower = dplyr::case_when(
+      color_lab == "non-carriers" ~ -Inf,
+      TRUE ~ as.numeric(sub("^\\[(\\d+).*", "\\1", rv_lab))
+    )
+  ) %>%
+  arrange(lower) %>%
+  pull(color_lab)
+
+
+
+rv_color_map <- setNames(
+  c(
+    "#084594",
+    "#084594",
+    "#084594",
+    "#084594",
+    "#084594",
+    "#084594",
+    "#00441B",
+    "#00441B",
+    "#00441B",
+    "#00441B",
+    "#00441B",
+    "#00441B",   
+    "darkorange",
+    "red4"
+  )[seq_along(rv_levels)],
+  rv_levels
+)
+
+
+# Add reference color
+rv_color_map["Reference"] <- "black"
+
+# Ensure unique ordered levels (Reference first conceptually)
+ordered_levels <- unique(c("Reference", rv_levels))
+
+validation <- validation %>%
+  mutate(
+    color_lab = factor(color_lab, levels = ordered_levels)
+  ) %>%
+  group_by(x_lab) %>%
+  mutate(
+    plot_index = dplyr::case_when(
+      is_ref ~ 1L,
+      TRUE ~ NA_integer_
+    )
+  ) %>%
+  mutate(
+    plot_index = ifelse(
+      is.na(plot_index),
+      as.integer(color_lab) + 1L,
+      plot_index
+    )
+  ) %>%
+  ungroup()
+
+
+# Plot
+ggplot(
+  validation,
+  aes(
+    x = x_lab,
+    y = OR,
+    ymin = OR_lower,
+    ymax = OR_upper,
+    color = color_lab,
+    shape = Validation,
+    group = interaction(Cancer, x_lab, plot_index, Validation)
+  )
+) +
+  geom_pointrange(
+    position = position_dodge(width = 0.7),
+    size = 1
+  ) +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    color = "gray30"
+  ) +
+  labs(
+    x = "CV PGS quantile",
+    y = "OR",
+    color = "RV PGS quantile"
+  ) +
+  scale_y_log10(
+    breaks = c(0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 10),
+    minor_breaks = NULL
+  ) +
+  scale_color_manual(values = rv_color_map, drop = FALSE) +
+  scale_shape_manual(values = c(15,16))+
+  theme_classic(base_size = 16) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text = element_text(size = 16),
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 16)
+    
+  ) +
+  facet_wrap(~ Cancer, nrow = 3, ncol = 1, scales = "free_y")
+
+
+ggsave("/lindstroem/austin_working/Dissertation/Aim_3/PGS_evaluation/Figure_2/Aim_3_Figure_2.png", width = 16, height = 16, dpi = 800)
