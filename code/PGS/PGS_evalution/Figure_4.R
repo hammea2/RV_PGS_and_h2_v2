@@ -2,27 +2,31 @@
 library(pacman)
 p_load(tidyverse)
 
-root = "/lindstroem/austin_working/Dissertation/Aim_3/Rare_variant_PGS/UKB_trained/"
-e_folder = "UKB_external/"
-i_folder = "UKB_internal/"
+root = "/lindstroem/austin_working/Dissertation/Aim_3/Rare_variant_PGS/AoU_trained/"
+e_folder = "AoU_external/"
+# i_folder = "AoU_internal/"
 
 # Load data #
-e_valid_breast = read.csv(paste0(root, e_folder, "UKB_trained_breast_external_OR_by_quantile_table.txt")) %>%
-  mutate(Cancer = "Breast cancer", Validation = "AoU (External)")
-e_valid_colorectal = read.csv(paste0(root, e_folder, "UKB_trained_colorectal_external_OR_by_quantile_table.txt"))  %>%
-  mutate(Cancer = "Colorectal cancer", Validation = "AoU (External)")
-e_valid_prostate = read.csv(paste0(root, e_folder, "UKB_trained_prostate_external_OR_by_quantile_table.txt"))  %>%
-  mutate(Cancer = "Prostate cancer", Validation = "AoU (External)")
+e_valid_breast = read.csv(paste0(root, e_folder, "AoU_trained_breast_external_OR_by_quantile_table.txt")) %>%
+  mutate(Cancer = "Breast cancer", Validation = "UKB (External)")
+e_valid_colorectal = read.csv(paste0(root, e_folder, "AoU_trained_colorectal_external_OR_by_quantile_table.txt"))  %>%
+  mutate(Cancer = "Colorectal cancer", Validation = "UKB (External)")
+e_valid_prostate = read.csv(paste0(root, e_folder, "AoU_trained_prostate_external_OR_by_quantile_table.txt"))  %>%
+  mutate(Cancer = "Prostate cancer", Validation = "UKB (External)")
 
-i_valid_breast = read.csv(paste0(root, i_folder, "UKB_trained_breast_internal_OR_by_quantile_table.txt")) %>%
-  mutate(Cancer = "Breast cancer", Validation = "UKB (Internal)")
-i_valid_colorectal = read.csv(paste0(root, i_folder, "UKB_trained_colorectal_internal_OR_by_quantile_table.txt"))  %>%
-  mutate(Cancer = "Colorectal cancer", Validation = "UKB (Internal)")
-i_valid_prostate = read.csv(paste0(root, i_folder, "UKB_trained_prostate_internal_OR_by_quantile_table.txt"))  %>%
-  mutate(Cancer = "Prostate cancer", Validation = "UKB (Internal)")
+# i_valid_breast = read.csv(paste0(root, i_folder, "AoU_trained_breast_internal_OR_by_quantile_table.txt")) %>%
+#   mutate(Cancer = "Breast cancer", Validation = "AoU (Internal)")
+# i_valid_colorectal = read.csv(paste0(root, i_folder, "AoU_trained_colorectal_internal_OR_by_quantile_table.txt"))  %>%
+#   mutate(Cancer = "Colorectal cancer", Validation = "AoU (Internal)")
+# i_valid_prostate = read.csv(paste0(root, i_folder, "AoU_trained_prostate_internal_OR_by_quantile_table.txt"))  %>%
+#   mutate(Cancer = "Prostate cancer", Validation = "AoU (Internal)")
 
-validation = rbind.data.frame(i_valid_breast, i_valid_colorectal, i_valid_prostate, e_valid_breast, e_valid_colorectal, e_valid_prostate) %>%
+# validation = rbind.data.frame(i_valid_breast, i_valid_colorectal, i_valid_prostate, e_valid_breast, e_valid_colorectal, e_valid_prostate) %>%
+#   filter(Superpopulation == "EUR")
+
+validation = rbind.data.frame( e_valid_breast, e_valid_colorectal, e_valid_prostate) %>%
   filter(Superpopulation == "EUR")
+
 validation$Cancer = factor(validation$Cancer, levels = c("Breast cancer", "Colorectal cancer", "Prostate cancer"))
 
 # Plot #
@@ -45,12 +49,13 @@ validation <- validation %>%
     
     # Color label with special handling
     color_lab = dplyr::case_when(
-      is_ref ~ "Reference",
+      is_ref ~ "Reference (non-cRV carriers)",
       grepl("^\\[0", rv_lab) ~ "non-cRV carriers",
       grepl("75%\\)$", rv_lab) ~ "cRV carriers < 75%",
       TRUE ~ rv_lab
     )
   )
+
 
 rv_levels <- validation %>%
   filter(!is_ref) %>%
@@ -71,15 +76,9 @@ rv_color_map <- setNames(
     "#084594",
     "#084594",
     "#084594",
-    "#084594",
-    "#084594",
-    "#084594",
     "#00441B",
     "#00441B",
     "#00441B",
-    "#00441B",
-    "#00441B",
-    "#00441B",   
     "darkorange",
     "red4"
   )[seq_along(rv_levels)],
@@ -88,10 +87,10 @@ rv_color_map <- setNames(
 
 
 # Add reference color
-rv_color_map["Reference"] <- "black"
+rv_color_map["Reference (non-cRV carriers)"] <- "black"
 
 # Ensure unique ordered levels (Reference first conceptually)
-ordered_levels <- unique(c("Reference", rv_levels))
+ordered_levels <- unique(c("Reference (non-cRV carriers)", rv_levels))
 
 validation <- validation %>%
   mutate(
@@ -123,7 +122,6 @@ ggplot(
     ymin = OR_lower,
     ymax = OR_upper,
     color = color_lab,
-    shape = Validation,
     group = interaction(Cancer, x_lab, plot_index, Validation)
   )
 ) +
@@ -159,4 +157,4 @@ ggplot(
   facet_wrap(~ Cancer, nrow = 3, ncol = 1, scales = "free_y")
 
 
-ggsave("/lindstroem/austin_working/Dissertation/Aim_3/PGS_evaluation/Figure_1/Aim_3_Figure_1.png", width = 16, height = 16, dpi = 800)
+ggsave("/lindstroem/austin_working/Dissertation/Aim_3/PGS_evaluation/Figure_2/Aim_3_Figure_2_external_only.png", width = 18, height = 16, dpi = 800)
