@@ -1,0 +1,911 @@
+---
+title: "UKB colorectal cancer internal test set CV and RV PGS performance evaluation"
+author: "Austin Hammermeister Suger"
+date: "`r Sys.Date()`"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: TRUE
+    toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      comment = "", fig.path = 'figures/', dev='jpeg',
+                      cache = FALSE)
+knitr::opts_knit$set(eval.after = "fig.cap")
+
+#install.packages("pacman")
+library(pacman)
+
+p_load(ggplot2)
+
+p_load(patchwork)
+
+p_load(rlang, dplyr, data.table,
+       reactable, R.utils,
+       purrr, pROC, DescTools,
+       prettydoc, furrr, broom,
+       forcats,
+       knitr, kableExtra)
+```
+
+
+# Raw colorectal cancer CV and RV PGS {.tabset}
+
+```{r load, eval=TRUE, echo=FALSE}
+system("dx download file-J5PY1yjJfyQzZ8bBz75X1Y96")
+data = fread("UKB_RV_colorectal_PGS_internal_validation_dataset.txt")
+
+system("dx download file-J4jzYQ8Jpjk25xGB43yfxj8G")
+CV_PGS_score = fread("colorectal_scores.sscore")
+
+raw_data = merge(data, CV_PGS_score, by.x = "Participant_ID", by.y = "IID") %>%
+  dplyr::select(names(data), SCORE1_AVG)
+```
+
+## Raw PGS by 1000G superpopulation
+
+```{r raw_score_by_pop, height = 10, width =  10, dpi=500}
+base_aes <- aes(color = Pop, fill = Pop)
+
+# Compute shared axis limits
+xlim <- range(raw_data$SCORE1_AVG, na.rm = TRUE) * c(1.01,1.01)
+ylim <- range(raw_data$raw_RV_PGS, na.rm = TRUE) * c(1.01,1.01)
+
+cor_val <- cor(
+  raw_data$SCORE1_AVG,
+  raw_data$raw_RV_PGS,
+  use = "complete.obs",
+  method = "pearson"
+)
+
+cor_label <- sprintf("Pearson r = %.3f", cor_val)
+
+
+# Scatterplot (two scores)
+p_scatter <- ggplot(raw_data, aes(x = SCORE1_AVG,
+                                  y = raw_RV_PGS,
+                                  color = Pop)) +
+  geom_point(alpha = 0.5, size = 1.2) +
+      annotate(
+    "text",
+    x = xlim[1] + 0.02 * diff(xlim),
+    y = ylim[2] - 0.04 * diff(ylim),
+    label = cor_label,
+    hjust = 0,
+    vjust = 1,
+    size = 2.8,
+    color = "black"
+  )+
+  scale_color_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_x_continuous(limits = xlim, expand = c(0,0)) +
+  scale_y_continuous(limits = ylim, expand = c(0,0)) +
+  labs(x = "CV PGS", y = "RV PGS") +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+# Density plot for X
+p_xdens <- ggplot(raw_data, aes(x = SCORE1_AVG, fill = Pop, color = Pop)) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  scale_fill_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_color_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_x_continuous(limits = xlim, expand = c(0,0)) +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+# Density plot for Y (horizontal)
+p_ydens <- ggplot(raw_data, aes(x = raw_RV_PGS, fill = Pop, color = Pop)) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  scale_fill_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_color_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_x_continuous(limits = ylim, expand = c(0,0)) +
+  coord_flip() +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+layout <- "
+AB
+CD
+"
+
+# A = top density (x)
+# B = empty space
+# C = scatter
+# D = right density
+
+plot = (p_xdens + patchwork::plot_spacer() +
+  p_scatter + p_ydens) +
+  plot_layout(
+    design = layout,
+    heights = c(2, 4),
+    widths = c(4, 2)
+  )
+
+plot
+
+ggplot2::ggsave("UKB_trained_colorectal_raw_PGS_values.jpg",dpi = 800, height = 10, width = 10)
+
+```
+
+# PCA-standardized colorectal cancer CV and RV PGS {.tabset}
+
+## PCA-based adjustment for colorectal cancer PGS
+- PCA Z-score adjustment described here: https://pgsc-calc.readthedocs.io/en/latest/explanation/geneticancestry.html
+- Cancer controls used as the reference population
+- References:
+  - Khera A.V., et al. (2019) Whole-Genome Sequencing to Characterize Monogenic and Polygenic Contributions in Patients Hospitalized With Early-Onset Myocardial Infarction. Circulation 139:1593–1602. https://doi.org/10.1161/CIRCULATIONAHA.118.035658
+  - Khan, A., et al. (2022) Genome-wide polygenic score to predict chronic kidney disease across ancestries. Nature Medicine 28:1412–1420. https://doi.org/10.1038/s41591-022-01869-1
+  - Linder, J.E., et al. (2023) Returning integrated genomic risk and clinical recommendations: The eMERGE study. Genetics in Medicine 25(4):100006. https://doi.org/10.1016/j.gim.2023.100006.
+
+```{r PC_standardize}
+standardize_pgs_pca <- function(data, pgs_col, pca_cols, ref_filter = NULL) {
+  # --- 1. Define reference population ---
+  if (!is.null(ref_filter)) {
+    ref_data <- data %>% filter(!!parse_expr(ref_filter))
+  } else {
+    ref_data <- data
+  }
+  
+  # --- 2. Fit regression model for mean adjustment (Z_norm1) ---
+  formula_mean <- as.formula(paste(pgs_col, "~", paste(pca_cols, collapse = " + ")))
+  mean_model <- lm(formula_mean, data = ref_data)
+  
+  # Predicted mean PGS for all individuals
+  data$pred_mean <- predict(mean_model, newdata = data)
+  
+  # Residuals
+  data$resid_mean <- data[[pgs_col]] - data$pred_mean
+  
+  # SD of residuals in reference population
+  if (!is.null(ref_filter)) {
+    sd_ref <- sd(data$resid_mean[with(data, eval(parse(text = ref_filter)))], na.rm = TRUE)
+  } else {
+   sd_ref <- sd(data$resid_mean, na.rm = TRUE)
+  }
+
+  # Z_norm1: mean-adjusted
+  data$Z_norm1 <- data$resid_mean / sd_ref
+  
+  # --- 3. Fit regression model for variance adjustment (Z_norm2) ---
+  # Create ref_data with residuals for variance model
+  ref_data <- if (!is.null(ref_filter)) {
+    data %>% filter(!!parse_expr(ref_filter))
+  } else {
+  data
+  }
+  
+  ref_data <- ref_data %>% mutate(resid_sq = resid_mean^2)
+  formula_sd <- as.formula(paste("resid_sq ~", paste(pca_cols, collapse = " + ")))
+  sd_model <- lm(formula_sd, data = ref_data)
+  
+  # Predicted SD for all individuals
+  data$pred_var <- predict(sd_model, newdata = data)
+  data$pred_sd <- sqrt(pmax(data$pred_var, 1e-8))
+  
+  # Z_norm2: mean + variance normalized
+  data$Z_norm2 <- data$resid_mean / data$pred_sd
+  
+  return(data)
+}
+
+# CV PGS
+
+original_names = names(raw_data)
+
+standardized_data <- standardize_pgs_pca(
+  raw_data,
+  pgs_col = "SCORE1_AVG",
+  pca_cols = paste0("PC", 1:20),
+  ref_filter = "colorectal_cancer == 0"
+)
+
+
+standardized_data = standardized_data %>% 
+  select(all_of(original_names), Z_norm2)
+
+colnames(standardized_data) = c(original_names,"CV_PGS_standardized")
+
+# RV PGS
+
+## Look for quantile gap (largest relative jump between adjacent quantiles)
+x <- standardized_data$raw_RV_PGS
+
+qs <- quantile(x, probs = seq(0.01, 0.5, by = 0.001))
+ratios <- qs[-1] / qs[-length(qs)]
+ratios[!is.finite(ratios)] <- NA  # replaces Inf/-Inf with NA
+i <- which.max(ratios)
+
+## Select threshold
+threshold <- qs[i]
+
+## Apply threshold to separate most RV carriers and non-carriers
+standardized_data <- standardized_data %>%
+  mutate(
+    RV_group = ifelse(raw_RV_PGS <= threshold, "likely_non_carrier", "likely_carrier")
+  )
+
+## Apply square root transformation to RV PGS
+standardized_data <- standardized_data %>%
+  mutate(
+    RV_PGS_standardized = sqrt(raw_RV_PGS)
+  )
+```
+
+## PC-standardized PGS by case status
+
+```{r standardized_score_by_case, height = 10, width =  10, dpi=500}
+colorectal_standardized_data = standardized_data %>%
+    mutate(case = ifelse(colorectal_cancer == 1, "Case", "Control") %>% as.factor())
+
+case_colors <- c(
+  "Case"    = "red",
+  "Control" = "black"
+)
+
+
+cor_val <- cor(
+  standardized_data$CV_PGS_standardized,
+  standardized_data$RV_PGS_standardized,
+  use = "complete.obs",
+  method = "pearson"
+)
+
+cor_label <- sprintf("Pearson r = %.3f", cor_val)
+
+
+base_aes <- aes(color = case, fill = case)
+
+# Compute shared axis limits
+xlim <- range(colorectal_standardized_data$CV_PGS_standardized, na.rm = TRUE) * c(1.1,1.1)
+ylim <- range(colorectal_standardized_data$RV_PGS_standardized, na.rm = TRUE) * c(0.99,1.1)
+# Scatterplot (two scores)
+p_scatter <- ggplot(
+  colorectal_standardized_data,
+  aes(x = CV_PGS_standardized, y = RV_PGS_standardized)
+) +
+  geom_point(
+    data = subset(colorectal_standardized_data, case == "Control"),
+    aes(color = case),
+    alpha = 0.4, size = 1.2
+  ) +
+  geom_point(
+    data = subset(colorectal_standardized_data, case == "Case"),
+    aes(color = case),
+    alpha = 0.7, size = 1.2
+  ) +
+          annotate(
+    "text",
+    x = xlim[1] + 0.02 * diff(xlim),
+    y = ylim[2] - 0.04 * diff(ylim),
+    label = cor_label,
+    hjust = 0,
+    vjust = 1,
+    size = 2.8,
+    color = "black"
+  )+
+  scale_color_manual(values = case_colors, name = "colorectal cancer") +
+  scale_x_continuous(limits = xlim, expand = c(0,0)) +
+  scale_y_continuous(limits = ylim, expand = c(0,0)) +
+  labs(x = "Standardized CV PGS", y = "sqrt(RV PGS)") +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+# Density plot for X
+p_xdens <- ggplot(
+  colorectal_standardized_data,
+  aes(x = CV_PGS_standardized, fill = case, color = case)
+) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  scale_fill_manual(values = case_colors, name = "colorectal cancer") +
+  scale_color_manual(values = case_colors, name = "colorectal cancer") +
+  scale_x_continuous(limits = xlim, expand = c(0,0)) +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+# Density plot for Y (horizontal)
+p_ydens <- ggplot(
+  colorectal_standardized_data,
+  aes(x = RV_PGS_standardized, fill = case, color = case)
+) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  scale_fill_manual(values = case_colors, name = "colorectal cancer") +
+  scale_color_manual(values = case_colors, name = "colorectal cancer") +
+  scale_x_continuous(limits = ylim, expand = c(0,0)) +
+  coord_flip() +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+layout <- "
+AB
+CD
+"
+
+# A = top density (x)
+# B = empty space
+# C = scatter
+# D = right density
+
+plot = (p_xdens + patchwork::plot_spacer() +
+  p_scatter + p_ydens) +
+  plot_layout(
+    design = layout,
+    heights = c(2, 4),
+    widths = c(4, 2)
+  )
+
+
+ggplot2::ggsave("UKB_trained_colorectal_standardized_PGS_values_case_status.jpg",dpi = 800, height = 10, width = 10)
+
+```
+
+## PC-standardized PGS by 1000G superpopulation
+
+```{r standardized_score_by_pop, height = 10, width =  10, dpi=500}
+base_aes <- aes(color = Pop, fill = Pop)
+
+# Compute shared axis limits
+xlim <- range(standardized_data$CV_PGS_standardized, na.rm = TRUE) * c(1.1,1.1)
+ylim <- range(standardized_data$RV_PGS_standardized, na.rm = TRUE) * c(0.99,1.1)
+
+# Scatterplot (two scores)
+p_scatter <- ggplot(standardized_data, aes(x = CV_PGS_standardized,
+                                  y = RV_PGS_standardized,
+                                  color = Pop)) +
+  geom_point(alpha = 0.5, size = 1.2) +
+  scale_color_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_x_continuous(limits = xlim, expand = c(0,0)) +
+  scale_y_continuous(limits = ylim, expand = c(0,0)) +
+  labs(x = "Standardized CV PGS", y = "sqrt(RV PGS)") +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+# Density plot for X
+p_xdens <- ggplot(standardized_data, aes(x = CV_PGS_standardized, fill = Pop, color = Pop)) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  scale_fill_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_color_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_x_continuous(limits = xlim, expand = c(0,0)) +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+# Density plot for Y (horizontal)
+p_ydens <- ggplot(standardized_data, aes(x = RV_PGS_standardized, fill = Pop, color = Pop)) +
+  geom_density(alpha = 0.4, adjust = 1.2) +
+  scale_fill_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_color_brewer(palette = "Set2", name = "Inferred 1000G Superpopulation") +
+  scale_x_continuous(limits = ylim, expand = c(0,0)) +
+  coord_flip() +
+  theme_classic(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0,0,0,0)
+  )
+
+layout <- "
+AB
+CD
+"
+
+# A = top density (x)
+# B = empty space
+# C = scatter
+# D = right density
+
+(p_xdens + plot_spacer() +
+  p_scatter + p_ydens) +
+  plot_layout(
+    design = layout,
+    heights = c(2, 4),
+    widths = c(4, 2)
+  )
+
+plot = (p_xdens + patchwork::plot_spacer() +
+  p_scatter + p_ydens) +
+  plot_layout(
+    design = layout,
+    heights = c(2, 4),
+    widths = c(4, 2)
+  )
+
+plot
+
+ggplot2::ggsave("UKB_trained_colorectal_standardized_PGS_values.jpg",dpi = 800, height = 10, width = 10)
+
+```
+
+# PGS performance {.tabset}
+
+## AUC and psudo R2
+- pROC R package for AUC
+- DescTools R package for for Nagelkerke pseudo R²
+
+```{r AUC_r2}
+evaluate_auc_r2_two_scores <- function(
+  data,
+  score1_col,
+  score2_col,
+  covar_col = NULL, 
+  case_col,
+  ancestry_col,
+  pops = NULL,
+  ci_level = 0.95
+) {
+  
+  # Filter populations if requested
+  if (!is.null(pops)) {
+    data <- data %>% filter(.data[[ancestry_col]] %in% pops)
+  }
+  
+  # Function to fit a model and extract AUC + R²
+  fit_and_extract <- function(sub, formula_str, model_label, resp, ci_level, score_names) {
+    
+    model <- glm(
+      as.formula(formula_str),
+      data = sub,
+      family = binomial(link = "logit")
+    )
+    
+    lp <- predict(model, type = "link")
+    
+    roc_obj <- tryCatch(
+      roc(response = resp, predictor = lp),
+      error = function(e) NULL
+    )
+    
+    if (!is.null(roc_obj)) {
+      ci <- ci.auc(roc_obj, conf.level = ci_level)
+      auc       <- round(as.numeric(roc_obj$auc), 3)
+      auc_lower <- round(ci[1], 3)
+      auc_upper <- round(ci[3], 3)
+    } else {
+      auc <- auc_lower <- auc_upper <- NA_real_
+    }
+    
+    pseudo_r2 <- round(PseudoR2(model, which = "Nagelkerke"), 5)
+    
+    tibble(
+      Model = model_label,
+      Score = score_names,
+      auc = auc,
+      auc_lower = auc_lower,
+      auc_upper = auc_upper,
+      nagelkerke_R2 = pseudo_r2
+    )
+  }
+  
+  # Process by ancestry group
+  results <- data %>%
+    group_split(across(all_of(ancestry_col))) %>%
+    map_dfr(function(sub) {
+      ancestry <- unique(sub[[ancestry_col]])
+      if (nrow(sub) == 0) return(NULL)
+      
+      resp <- sub[[case_col]]
+      
+      # skip if only one outcome class
+      if (length(unique(resp)) <= 1) {
+        return(tibble(
+          Superpopulation = ancestry,
+          n = nrow(sub),
+          n_cases = sum(resp == 1, na.rm = TRUE),
+          n_controls = sum(resp == 0, na.rm = TRUE),
+          Model = c("Combined","Score1_only","Score2_only"),
+          Score = c(paste(score1_col, "+", score2_col), score1_col, score2_col),
+          auc = NA_real_,
+          auc_lower = NA_real_,
+          auc_upper = NA_real_,
+          nagelkerke_R2 = NA_real_
+        ))
+      }
+      
+      #‒‒‒‒ FIT ALL THREE MODELS ‒‒‒‒
+      combined <- fit_and_extract(
+        sub,
+        paste(case_col, "~", score1_col, "+", score2_col),
+        "Combined",
+        resp,
+        ci_level,
+        score_names = paste(score1_col, "+", score2_col)
+      )
+      
+      score1 <- fit_and_extract(
+        sub,
+        paste(case_col, "~", score1_col),
+        "Score1_only",
+        resp,
+        ci_level,
+        score_names = score1_col
+      )
+      
+      score2 <- fit_and_extract(
+        sub,
+        paste(case_col, "~", score2_col),
+        "Score2_only",
+        resp,
+        ci_level,
+        score_names = score2_col
+      )
+      
+      bind_rows(combined, score1, score2) %>%
+        mutate(
+          Superpopulation = ancestry,
+          n = nrow(sub),
+          n_cases = sum(resp == 1),
+          n_controls = sum(resp == 0)
+        ) %>%
+        dplyr::select(Superpopulation, n, n_cases, n_controls, Score,
+               auc, auc_lower, auc_upper, nagelkerke_R2)
+    })
+  
+  return(results)
+}
+
+summary_table <- evaluate_auc_r2_two_scores(
+  data       = standardized_data,
+  score1_col = "CV_PGS_standardized",
+  score2_col = "RV_PGS_standardized",
+  case_col   = "colorectal_cancer",
+  ancestry_col = "Pop",
+  pops = c("AFR","AMR","EUR")
+)
+
+  
+summary_table %>%
+  kable() %>%
+  kable_classic_2()
+
+fwrite(summary_table, "UKB_trained_colorectal_internal_AUC.txt")
+
+
+```
+
+
+## OR per PGS SD
+- Models adjusted for age at DNA sample collection and the other PGS
+
+```{r OR_SD}
+compute_or_two_scores <- function(
+  data,
+  score1_col,
+  score2_col,
+  case_col,
+  ancestry_col,
+  covariates = c("Age","Female"),
+  pops = NULL
+) {
+  
+  # Subset populations if requested
+  if (!is.null(pops)) {
+    data <- data %>% filter(.data[[ancestry_col]] %in% pops)
+  }
+  
+  or_table <- data %>%
+    group_split(across(all_of(ancestry_col))) %>%
+    map_dfr(function(sub) {
+      ancestry <- unique(sub[[ancestry_col]])
+      
+      n_cases <- sum(sub[[case_col]] == 1, na.rm = TRUE)
+      n_controls <- sum(sub[[case_col]] == 0, na.rm = TRUE)
+      
+      # Only fit model if both cases and controls exist
+      if (length(unique(sub[[case_col]])) > 1) {
+        
+        # Build formula string dynamically: include covariates if provided
+        formula_str <- paste(case_col, "~", score1_col, "+", score2_col)
+        if (!is.null(covariates) && length(covariates) > 0) {
+          formula_str <- paste(formula_str, "+", paste(covariates, collapse = " + "))
+        }
+        
+        # Fit logistic regression model
+        model <- glm(as.formula(formula_str), data = sub, family = binomial(link = "logit"))
+        tidy_model <- broom::tidy(model, conf.int = TRUE, exponentiate = TRUE)
+        
+        # Extract ORs and p-values for the two scores
+        scores_to_extract <- c(score1_col, score2_col)
+        tidy_model %>%
+          filter(term %in% scores_to_extract) %>%
+          transmute(
+            Superpopulation = ancestry,
+            n = nrow(sub),
+            n_cases = n_cases,
+            n_controls = n_controls,
+            Score = term,
+            OR = round(estimate, 2),
+            OR_lower = round(conf.low, 4),
+            OR_upper = round(conf.high, 4),
+            p_value = format.pval(p.value,
+                                  digits = 4,
+                                  scientific = TRUE,
+                                  eps = 1E-300)
+          )
+        
+      } else {
+        # If only one outcome class
+        tibble(
+          Superpopulation = ancestry,
+          n = nrow(sub),
+          n_cases = n_cases,
+          n_controls = n_controls,
+          Score = c(score1_col, score2_col),
+          OR = NA_real_,
+          OR_lower = NA_real_,
+          OR_upper = NA_real_,
+          p_value = NA_character_
+        )
+      }
+    })
+  
+  return(or_table)
+}
+
+standardized_data$sqrt_scaled_RV_PGS = 10*standardized_data$RV_PGS_standardized
+
+or_results <- compute_or_two_scores(
+  data = standardized_data,
+  score1_col = "CV_PGS_standardized",
+  score2_col = "sqrt_scaled_RV_PGS",
+  case_col = "colorectal_cancer",
+  ancestry_col = "Pop",
+  covariates = c("Age","Female"),
+  pops = c("AFR","AMR","EUR")
+)
+
+
+or_results %>%
+  kable() %>%
+  kable_classic_2()
+
+fwrite(or_results, "UKB_trained_colorectal_internal_OR_by_PGS_SD.txt")
+```
+
+## OR by joint quantiles of each PGS in EUR
+- Models adjusted for age at DNA sample collection and the other PGS
+
+```{r OR_by_tertile_EUR, width = 20, height = 10, dpi=500}
+compute_joint_or <- function(
+  data,
+  case_col,
+  ancestry_col = NULL,
+  CV_col = "CV_PGS_standardized",
+  RV_col = "RV_PGS_standardized",
+  CV_breaks = c(0, 0.4, 0.6, 1),
+  RV_breaks = c(0, 0.1, 0.2, 0.8, 0.9, 1),
+  CV_labels = NULL,
+  RV_labels = NULL,
+  ref_CV = 2,
+  ref_RV = 3,
+  covariates = NULL,
+  pops = "EUR"
+) {
+  # Ensure unique breaks
+  CV_breaks <- quantile(data[[CV_col]], probs = CV_breaks, na.rm = TRUE) %>% unique()
+  RV_breaks <- quantile(data[[RV_col]], probs = RV_breaks, na.rm = TRUE) %>% unique()
+
+  # Filter population
+  data <- data %>%
+    filter(Pop %in% pops) %>%
+    mutate(
+      CV_group = cut(.data[[CV_col]], breaks = CV_breaks, include.lowest = TRUE, labels = FALSE),
+      RV_group = cut(.data[[RV_col]], breaks = RV_breaks, include.lowest = TRUE, labels = FALSE)
+    )
+
+  nCV <- length(unique(data$CV_group))
+  nRV <- length(unique(data$RV_group))
+
+  # Compute joint order
+  data <- data %>%
+    mutate(JointOrder = (CV_group - 1) * nRV + RV_group)
+
+  ref_joint <- (ref_CV - 1) * nRV + ref_RV
+
+  # Labels
+  if (is.null(CV_labels)) CV_labels <- paste0("CV", 1:nCV)
+  if (is.null(RV_labels)) RV_labels <- paste0("RV", 1:nRV)
+
+  data <- data %>%
+    mutate(
+      JointLabel = paste0(CV_labels[CV_group], ", ", RV_labels[RV_group])
+    )
+
+  # Factor levels: logical order by CV_group then RV_group
+  joint_levels <- data %>%
+    distinct(JointOrder, JointLabel, CV_group, RV_group) %>%
+    arrange(CV_group, RV_group) %>%
+    pull(JointLabel)
+
+  data$JointLabel <- factor(data$JointLabel, levels = joint_levels)
+
+  # Split by ancestry
+  if (!is.null(ancestry_col)) {
+    split_data <- data %>% group_split(.data[[ancestry_col]])
+  } else {
+    split_data <- list(data)
+  }
+
+  # Compute OR
+  compute_one <- function(sub) {
+    ancestry <- if (!is.null(ancestry_col)) unique(sub[[ancestry_col]]) else "All"
+
+    counts_tbl <- sub %>%
+      group_by(JointLabel) %>%
+      summarise(
+        n = n(),
+        n_cases = sum(.data[[case_col]] == 1, na.rm = TRUE),
+        n_controls = sum(.data[[case_col]] == 0, na.rm = TRUE),
+        .groups = "drop"
+      )
+
+    # Handle no variation
+    if (length(unique(sub[[case_col]])) < 2) {
+      return(counts_tbl %>% mutate(OR=NA, OR_lower=NA, OR_upper=NA, p_value=NA, Superpopulation=ancestry))
+    }
+
+    # Logistic regression
+    sub$JointOrder <- factor(sub$JointOrder, levels = sort(unique(sub$JointOrder)))
+    sub$JointOrder <- relevel(sub$JointOrder, ref = as.character(ref_joint))
+
+    formula_str <- paste(case_col, "~ JointOrder")
+    if (!is.null(covariates)) formula_str <- paste(formula_str, "+", paste(covariates, collapse = " + "))
+
+    model <- glm(as.formula(formula_str), data = sub, family = binomial())
+    tidy_m <- tidy(model, conf.int = TRUE, exponentiate = TRUE)
+
+    df <- counts_tbl %>%
+      mutate(OR = 1, OR_lower = 1, OR_upper = 1, p_value = NA_character_, Superpopulation = ancestry)
+
+    for (i in seq_len(nrow(tidy_m))) {
+      term <- tidy_m$term[i]
+      if (term != "(Intercept)") {
+        level_num <- as.numeric(gsub("JointOrder", "", term))
+        joint_label <- sub$JointLabel[sub$JointOrder == level_num][1]
+        df$OR[df$JointLabel == joint_label] <- round(tidy_m$estimate[i], 3)
+        df$OR_lower[df$JointLabel == joint_label] <- round(tidy_m$conf.low[i], 3)
+        df$OR_upper[df$JointLabel == joint_label] <- round(tidy_m$conf.high[i], 3)
+        df$p_value[df$JointLabel == joint_label] <- format.pval(tidy_m$p.value[i], digits=3, eps=1e-300)
+      }
+    }
+
+    df
+  }
+
+  map_dfr(split_data, compute_one)
+}
+
+threshold_name_percent = names(threshold)
+threshold_decimal <- gsub("%", "", threshold_name_percent) %>% as.numeric() / 100
+
+or_table <- compute_joint_or(
+  data = colorectal_standardized_data,
+  ancestry_col = "Pop",
+  case_col = "colorectal_cancer",
+  CV_col = "CV_PGS_standardized",
+  RV_col = "RV_PGS_standardized",
+  CV_breaks = c(0, 0.33, 0.66, 1),
+  RV_breaks = c(0, threshold_decimal, 0.75, 0.90, 1),
+  CV_labels = c("[0–33%)", "[33–66%)", "[66–100%]"),
+  RV_labels = c(
+    paste0("[0–", threshold_name_percent, ")"),
+    paste0("[", threshold_name_percent, "–75%)"),
+    "[75–90%)",
+    "[90–100%]"
+  ),
+  ref_CV = 2,
+  ref_RV = 1,
+  covariates = c("Age","Female"),
+  pops = c("EUR")
+)
+
+or_table
+
+or_table %>%
+  kable() %>%
+  kable_classic_2()
+
+fwrite(or_table, "UKB_trained_colorectal_internal_OR_by_quantile_table.txt")
+
+or_table = or_table %>%
+  mutate(color_lab = sub("^[^,]*,\\s*", "", JointLabel),
+         x_lab = sub(",.*$", "", JointLabel))
+
+plot_joint_or <- function(or_table) {
+
+  ggplot(or_table, aes(x = x_lab, y = OR, ymin = OR_lower, ymax = OR_upper,
+                       color = color_lab)) +
+    geom_pointrange(position = position_dodge(width = 0.6), size = 0.5) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+    labs(x = "CV PGS quantile", y = "OR", color = "RV PGS quantile") +
+    scale_y_log10(breaks = c(0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 10), minor_breaks = NULL) +
+    theme_classic(base_size = 10) +
+    scale_color_manual(
+    values = c("darkgreen","black", "#CC3399", "#FF0000"),) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "top",
+      plot.title = element_text(face = "bold", size = 14)
+    ) + facet_wrap(~Superpopulation)
+}
+
+plot <- plot_joint_or(or_table)
+
+ggplot2::ggsave("UKB_trained_colorectal_internal_OR_by_quantile_plot.jpg",
+                dpi = 800, width = 10, height = 10)
+plot
+
+```
+
+```{r save, eval=FALSE, echo=FALSE}
+system("dx upload UKB_colorectal_cancer_internal_test_set_CV_and_RV_PGS_performance_evaluation_updated.Rmd --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/scripts/evaluation/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_raw_PGS_values.jpg --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_standardized_PGS_values.jpg --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_standardized_PGS_values_case_status.jpg --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_internal_AUC.txt --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_internal_OR_by_PGS_SD.txt --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_internal_OR_by_quantile_table.txt --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+system("dx upload UKB_trained_colorectal_internal_OR_by_quantile_plot.jpg --path project-GZqFkYQJfyQzB1G6YBg89ZG3:/austin_working/dissertation_project/Aim_3/result_summaries/colorectal_v3/")
+
+```
