@@ -2,9 +2,10 @@
 library(pacman)
 p_load(tidyverse)
 
+####### AoU ############
+
 root = "/lindstroem/austin_working/Dissertation/Aim_3/Rare_variant_PGS/AoU_trained/"
 e_folder = "AoU_external/"
-# i_folder = "AoU_internal/"
 
 # Load data #
 e_valid_breast = read.csv(paste0(root, e_folder, "AoU_trained_breast_external_OR_by_quantile_table.txt")) %>%
@@ -13,16 +14,6 @@ e_valid_colorectal = read.csv(paste0(root, e_folder, "AoU_trained_colorectal_ext
   mutate(Cancer = "Colorectal cancer", Validation = "UKB (External)")
 e_valid_prostate = read.csv(paste0(root, e_folder, "AoU_trained_prostate_external_OR_by_quantile_table.txt"))  %>%
   mutate(Cancer = "Prostate cancer", Validation = "UKB (External)")
-
-# i_valid_breast = read.csv(paste0(root, i_folder, "AoU_trained_breast_internal_OR_by_quantile_table.txt")) %>%
-#   mutate(Cancer = "Breast cancer", Validation = "AoU (Internal)")
-# i_valid_colorectal = read.csv(paste0(root, i_folder, "AoU_trained_colorectal_internal_OR_by_quantile_table.txt"))  %>%
-#   mutate(Cancer = "Colorectal cancer", Validation = "AoU (Internal)")
-# i_valid_prostate = read.csv(paste0(root, i_folder, "AoU_trained_prostate_internal_OR_by_quantile_table.txt"))  %>%
-#   mutate(Cancer = "Prostate cancer", Validation = "AoU (Internal)")
-
-# validation = rbind.data.frame(i_valid_breast, i_valid_colorectal, i_valid_prostate, e_valid_breast, e_valid_colorectal, e_valid_prostate) %>%
-#   filter(Superpopulation == "EUR")
 
 validation = rbind.data.frame( e_valid_breast, e_valid_colorectal, e_valid_prostate) %>%
   filter(Superpopulation == "EUR")
@@ -114,7 +105,7 @@ validation <- validation %>%
 
 
 # Plot
-ggplot(
+plot <- ggplot(
   validation,
   aes(
     x = x_lab,
@@ -127,12 +118,13 @@ ggplot(
 ) +
   geom_pointrange(
     position = position_dodge(width = 0.7),
-    size = 1
+    size = 1.2
   ) +
   geom_hline(
     yintercept = 1,
     linetype = "dashed",
-    color = "gray30"
+    color = "gray30",
+    linewidth = 0.8
   ) +
   labs(
     x = "CV PGS quantile",
@@ -144,17 +136,36 @@ ggplot(
     minor_breaks = NULL
   ) +
   scale_color_manual(values = rv_color_map, drop = FALSE) +
-  scale_shape_manual(values = c(15,16))+
-  theme_classic(base_size = 16) +
+  scale_shape_manual(values = c(15, 16)) +
+  theme_classic(base_size = 20) +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    axis.text = element_text(size = 16),
-    legend.position = "top",
-    strip.background = element_blank(),
-    strip.text = element_text(size = 16)
+    # Axis titles
+    axis.title = element_text(size = 22),
     
+    # Axis tick labels
+    axis.text.x = element_text(
+      size = 17,
+      angle = 45,
+      hjust = 1
+    ),
+    axis.text.y = element_text(size = 18),
+    
+    # Legend
+    legend.position = "top",
+    legend.title = element_text(size = 19),
+    legend.text = element_text(size = 19),
+    legend.key.size = unit(1.2, "cm"),
+    
+    # Facet labels
+    strip.background = element_blank(),
+    strip.text = element_text(size = 20, face = "bold")
   ) +
-  facet_wrap(~ Cancer, nrow = 3, ncol = 1, scales = "free_y")
+  facet_wrap(
+    ~ Cancer,
+    nrow = 3,
+    ncol = 1,
+    scales = "free_y"
+  )
 
 
-ggsave("/lindstroem/austin_working/Dissertation/Aim_3/PGS_evaluation/Figure_2/Aim_3_Figure_2_external_only.png", width = 18, height = 16, dpi = 800)
+ggsave("/lindstroem/austin_working/RV_h2_and_PGS_manuscript_revision/Manuscript_Figure_4.png", plot, width = 18, height = 16, dpi = 800)
